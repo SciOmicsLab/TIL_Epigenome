@@ -6,8 +6,8 @@ This repository contains
 1. Code to reproduce the analyses and figures in "CD4 Polarization Phenotypes are Associated with Reduced Expansion of
 Tumor Infiltrating Lymphocytes in Adoptive Cell Therapy Treated Melanoma Patients"
 * Full-length dataset is available from Geo as accession number [GSE218006] (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE218006) 
-* Pre-processed data sets such as count matrices and Sample metadata (de-identified) is available as Supplementary materials, also in this Github.
-* Run all codes in the Preprocess folder first to generate count matrices and peaks files, then the R Markdown code for each omics class (RNA-seq and ChIP-seq). 
+* Pre-processed data sets such as count matrices and Sample metadata (de-identified) are also available in this Github.
+
 
 
 ## Materials & Methods: 
