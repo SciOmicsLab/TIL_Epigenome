@@ -12,13 +12,10 @@ Tumor Infiltrating Lymphocytes in Adoptive Cell Therapy Treated Melanoma Patient
 
 ## Materials & Methods: 
 Clinical trials and patient samples
-Females and Males are split equally between TIL Low and TIL High groups. 
+Females and Males are split equally between TIL Low and TIL High groups. CD4+ and CD8+ were isolated from the TIL product from melanoma patients that either responded to TIL ACT or had progressive disease.
 
 ### RNA-seq analysis
 For RNA-seq libraries, reads were evaluated by FASTQC for sequence quality and adapter contamination. Reads displayed high quality without evidence of adapter contamination, thus reads were not trimmed. Reads were aligned to the human genome (GRCH38) using HISAT2 (v2.2.1). Mapped reads were counted using HTSeq ver 0.13.5 with the options for paired end reads aligned to "gene" feature type and "gene_id" idattr, non-stranded (appropriate for this genome). Differential gene expression tests were performed with DESeq2. Genes with cutoff values of ±0.58 log2 fold-change (log2FC) and adjusted P < 0.1 (Benjamini-Hochberg method) were considered differentially expressed. Pathway analysis was conducted with Quiagen Ingenuity Pathway Analysis (IPA). 
-
-### Chromatin Immunoprecipitation sequencing (ChIP-seq) library preparation and sequencing
-CD4+ and CD8+ were isolated from the TIL product from melanoma patients that either responded to TIL ACT or had progressive disease. 
 
 ### ChIP-seq analysis
 For ChIP-seq libraries, reads were evaluated by FASTQC for sequence quality and adapter contamination. Reads were trimmed using Trim Galore!” and aligned to the human genome (NCBI GRCH38 p14) using bowtie 2 (v2.4.2) with the default settings. Multimapping and duplicate reads were removed with SAMtools and Picard tools. ChIP enrichment peaks were called using macs2 (v.2.2.7.1) with the setting “--broad”. Differential ChIP peaks were identified using the R package, DiffBind with the option “minOverlap=2, bScaleControl = True, bSubControl = True, bParallel=True, score= DBA_SCORE_READS” for dba.count(), “method=DBA_DESEQ2,  normalize=DBA_NORM_NATIVE, library=DBA_LIBSIZE_PEAKREADS” for dba.normalize() and “bBlacklist = TRUE, bGreylist = TRUE, bParallel = TRUE” for dba.analyze(). Any confounding effect due to batch differences was controlled with the design argument in DiffBind. Given the varied nature of panH3ac peaks, differential ChIP peaks were assigned to the nearest gene with ChIP-Enrich.  Genes with cutoff values of ±0.58 log2 fold-change (log2FC) and adjusted P < 0.1 (Benjamini-Hochberg method) were considered differentially expressed.
@@ -28,12 +25,12 @@ All statistical analyses and data visualizations were performed with R, or withi
 
 ## Instructions  
 1. File/directory setup  
-To run the RNA-seq preprocessing, clone the git repo, download the fastq files and set up in a folder structure like:    
+First clone the git repo, download the fastq files and set up in a folder structure like:    
  ./RNA_seq/fastq/    
  ./RNA_seq/**script files to go here**  
  ./RNA_seq/counts/**count matrix to go here** 
  ./ChIP_seq/group_1_fastq/**ChIPseq group1 files can be identified by \*Moff_Pt\*.fastq.gz and \*Moff_Pooled\*.fastq.gz** 
- ./ChIP_seq/group_2_fastq/**remaining fastq files areChIPseq group2**  
+ ./ChIP_seq/group_2_fastq/**remaining fastq files are ChIPseq group2**  
  ./ChIP_seq/**script files to go here**  
  ./ChIP_seq/peaks_group1**group1 peaks files to go here**
  ./ChIP_seq/peaks_group2**sgroup2 peaks files to go here**
@@ -62,5 +59,6 @@ To run the RNA-seq preprocessing, clone the git repo, download the fastq files a
 
  5. ChIP-seq downstream analysis, from the ChIP_Seq/ dir, use R Studio to run:  
  - ChIP-seq.Rmd
+ - You can make your own peakset file to use in DiffBind, but we recommend using our peakset files located in XXXXXXX as some duplicate samples and a low quality sample were removed by their position in the peakset files.  
 
 
