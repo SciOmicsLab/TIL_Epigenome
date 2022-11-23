@@ -1,0 +1,792 @@
+---
+title: "DESeq2_TIL_RNAseq"
+author: "Ann Strange"
+date: "9/2022"
+output: 
+  html_document:
+    code_folding: "hide"
+
+---
+
+# RNA-seq Daata Analysis for 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path="Figs/", echo=FALSE, warning=TRUE, message=TRUE)
+
+library(DESeq2)
+library(biomaRt)
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(ggpubr)
+library(readxl)
+library(data.table)
+library(ggrepel)
+library(stringr)
+library(zoo)
+library(ggfortify)
+library(factoextra)
+library(pls)
+library(pheatmap)
+library(DT)
+```
+
+
+
+```{r functions-chunk, include=FALSE}
+
+#Given HGNC symbols and add ENSEMBL IDs 
+get_ensembl_symbols <- function(data){
+
+  ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
+  gene_names <- getBM(attributes = c('ensembl_gene_id','hgnc_symbol'),mart = ensembl)
+
+  # this fills in blanks in the gene_names data set
+  gene_names[gene_names$ensembl_gene_id=="",'ensembl_gene_id'] <- gene_names[gene_names$ensembl_gene_id=="",'hgnc_symbol']
+
+  gene_names[,"unified_gene_symbol"] <- NA
+  for(i in 1:nrow(gene_names)){
+    gene_names[i,"unified_gene_symbol"] <- paste(gene_names[gene_names$hgnc_symbol==gene_names[i,"hgnc_symbol"],"ensembl_gene_id"],collapse = "-")
+  }
+  gene_names <- gene_names[c("hgnc_symbol","unified_gene_symbol")]
+  gene_names <- unique(gene_names)
+  rownames(gene_names) <- gene_names$hgnc_symbol
+  gene_names <- gene_names["unified_gene_symbol"]
+
+  data_gene_names <- data.frame(ensembl_gene_id=rownames(data),row.names = rownames(data))
+  intersection_genes <- intersect(rownames(data_gene_names),rownames(gene_names))
+  data_gene_names[intersection_genes,"ensembl_gene_id"] <- gene_names[intersection_genes,"unified_gene_symbol"]
+
+  return(make.unique(as.character(data_gene_names$ensembl_gene_id), sep = "_"))
+}
+
+
+#Filter the results by p-val, adjusted p-val, and absolute log2FoldChange. 
+filter_de <- function(de_data,pval, pajd, abs_lfc){
+  de_data_df <- as.data.frame(de_data)
+  de_data_df <- de_data_df[!is.na(de_data_df$padj) & !is.na(de_data_df$pvalue),]
+  de_data_df <- de_data_df[de_data_df$pvalue<pval & de_data_df$padj<pajd,]
+  de_data_df <- de_data_df[order(de_data_df$log2FoldChange, decreasing=TRUE),]
+  de_data_df_low <- de_data_df[de_data_df$log2FoldChange < -abs_lfc,]
+  de_data_df_high <- de_data_df[de_data_df$log2FoldChange > abs_lfc,]
+  return(rbind(de_data_df_high,de_data_df_low))
+  
+}
+
+# Export entire result set (or top and bottom lim number)
+export_csv <- function(de_data, filename){
+  de_data_df <- as.data.frame(de_data)
+  de_data_df <- arrange(de_data_df, padj, pvalue)
+  write.csv(de_data_df, filename, row.names=TRUE)
+  return(head(de_data_df))
+}
+
+#Make a bar plot for a given dataframe with the Differential Expression data
+plot_de <- function(de_data, .title=""){
+  group_colors <- c("#B2182B", "#2166AC")
+  if(all(de_data$log2FoldChange<0))
+    group_colors <- rev(group_colors)
+  de_data$gene_name <- rownames(de_data)
+  plt <- ggplot(data = de_data,
+                aes(x = reorder(gene_name,log2FoldChange), y = log2FoldChange, fill = log2FoldChange < 0))+
+    geom_bar(stat = "identity")+
+    scale_fill_manual(values = group_colors)+
+    coord_flip()+
+    theme_minimal()+
+    guides(fill = FALSE)+
+    labs(x = "Gene", title = .title)
+  
+  return(plt)
+}
+
+#make a volcano plot directly from the result() function from DESeq considering a given adjusted p-val and foldchange threshold
+plot_volcano <- function(de_data, fdr_threshold, fc_threshold, .title=""){
+  res1 <- as.data.frame(de_data)
+  
+  res1 <- res1[!is.na(res1$padj),]
+  res1 <- res1[!is.na(res1$pvalue),]
+  
+  res1 <- mutate(res1, sig=ifelse(res1$padj<fdr_threshold, paste("FDR<",as.character(fdr_threshold)), "Not Sig"))
+  res1[which(abs(res1$log2FoldChange)<fc_threshold),'sig'] <- "Not Sig"
+  
+  # logic for only showing gene labels for significance  
+  mask <- which(res1$sig == paste("FDR<",as.character(fdr_threshold)))
+  labels <- rep(NA, nrow(res1))  
+  labels[mask] <- rownames(res1[which(res1$sig == paste("FDR<",as.character(fdr_threshold))),])
+
+  plt <- ggplot(res1, aes(log2FoldChange, -log10(padj))) +
+    geom_point(aes(col=sig), size=1) +
+    geom_text_repel(aes(label = labels), size=2.5, max.overlaps = 20) + 
+    scale_color_manual(values=c("red", "black"))+
+    labs(y = "-log10 FDR", title = .title)
+  
+  return(plt)
+}
+
+#Plot normalized counts comparison between groups for a given gene
+plot_counts_for_gene <- function(dds_data,gene){
+  data <- as.data.frame(colData(dds_data))
+  data$expr <- counts(dds_data, normalized=TRUE)[gene,rownames(data)]
+  plt <- ggplot(data, aes_string(x = data$CellType, y = data$expr)) +
+         geom_boxplot() +
+         geom_point(size = 2, aes(color = Response2)) +
+         scale_color_manual(values = c("blue", "red")) +
+         stat_compare_means(paired = TRUE, method = "wilcox.test", size = 3.5, vjust = -1) +
+         theme(legend.position = "none", text = element_text(size=6)) +   # , axis.text.x = element_text(angle = 45)
+         labs(x= "Response",y = "Normalized Count", title = gene) +
+         facet_wrap(~Response2)
+  return (plt)
+}
+
+clean_count_data_columns <- function(df) {
+  # Cleanup on count_data colnames
+  # 1. drop first "X" and last "_"<something>
+  # 2. convert syntax of DoublePlus to "_++" on count_data 
+  # 3. change "." to "_"
+  # 4. test sorted count_data.colnames matches sorted clinical_data rownames
+  df <- as.data.frame(df)
+  cols <- colnames(df)
+  cols <- gsub("DoublePlus", "_Double" , cols)
+  cols <- gsub("^X", "", cols)
+  cols <- gsub("_S[0-9]*$", "", cols)
+  cols <- gsub("[.]","_", cols)
+  colnames(df) <- cols
+  
+  return(df)
+}
+
+clean_clinical_data_surv_rows <- function (df) {
+  # In order to collapse replicates (rows), delete rows where sampleId2 ends in _b
+  df <- subset(df,!grepl("^.+(_b)$",SampleId2))
+  
+  # update rows where sampleId2 ends in _a to remove (using SampleId does it)
+  df <- as.data.frame(df)
+  row.names(df) <- df$SampleId
+  dim(df)  # 34 x 14
+  
+  # Dplyr simplify on clinical_data to simplify things
+  df <- df %>% 
+    select(SampleId, Response, Response2, CellType, "Patient ID")
+  rownames.clin <- row.names(df)  
+  rownames.clin <- gsub("[+][+]", "Double" , rownames.clin)
+  rownames.clin
+  rownames(df) <- rownames.clin
+  return (df)
+}
+
+percent <- function(x, digits = 2, format = "f", ...) {      # Create user-defined function
+  paste0(formatC(x * 100, format = format, digits = digits, ...), "%")
+}
+
+# library(zoo)
+# library(ggfortify)
+# library(factoextra)
+# library(pls)
+gen_scree <- function(pca_results, pca_var ) {
+  
+    pca_var_df = data.frame(PC = 1:length(pca_var), variance = pca_var, cummulative_variance = rollapplyr(pca_var, length(pca_var), FUN = sum, partial = TRUE))
+  
+ plot <-  ggplot() +
+    geom_col(data = pca_var_df, aes(x=PC, y=cummulative_variance), color = "grey", alpha = 0.2) +
+    geom_line(data = pca_var_df, aes(x=PC, y=variance)) +
+    geom_point(data = pca_var_df, aes(x=PC, y=variance)) +
+    #geom_line(data = pca_var_df, aes(x=PC, y=cummulative_variance), color = "red") +
+    #geom_point(data = pca_var_df, aes(x=PC, y=cummulative_variance), color = "red") +
+    ylim(0,1) +
+    xlab("PCA") +
+    ylab("Variance Explained") +
+    theme_minimal()
+  
+ return(plot)
+}
+
+
+
+write_gct <- function(counts_data,file_name){
+  # counts_data should have genes for rows, and SampleIDs for columns, and extra column for GeneName 
+  
+  # Specify the column order, making sure description is first 
+  col.names <- colnames(counts_data)
+  col.names <- c("description", col.names[!col.names %in% c("description")])
+  counts_data <- counts_data %>%
+    dplyr::select(col.names)
+  
+  sample_rows <- nrow(counts_data)
+  sample_cols <- ncol(counts_data)
+  
+  cat("#1.2\n",file=file_name,sep="",append=FALSE)
+  cat(sample_rows,sample_cols-2,file=file_name,sep="\t",append=TRUE)
+  cat("\n",file=file_name,sep="",append=TRUE)
+  
+  counts_data <- data.frame(NAME=rownames(counts_data),counts_data)
+  
+  write.table(counts_data, file_name, append = TRUE, sep = "\t", dec = ".", row.names = FALSE, col.names = TRUE, quote=FALSE)
+}
+
+```
+
+## Load Count Matrix 
+Read in files, count matrix & sample data
+Exclude samples from Pt14 due to poor sequencing quality 
+
+```{r get-data, echo=FALSE}
+
+count_data <- read.table("./data/counts.table",header = TRUE,row.names = 1) 
+
+colnames <- colnames(count_data)
+
+# apply cleansing function to column names
+count_data <- clean_count_data_columns(count_data)
+
+# Remove columns to exclude
+print("Dropping these from the count matrix: Pt14_CD4,Pt14_CD8")
+exclude_lst <- names(count_data) %in% c("Pt14_CD4","Pt14_CD8") # bool vector
+count_data <- count_data[!exclude_lst]
+# Remove colnames ending in Double
+exclude_cols_lst <- names(count_data) %in% names(count_data)[grep("Double", names(count_data))]
+count_data <- count_data[!exclude_cols_lst]
+
+# Expect to have 22 columns of CD4 and CD8 raw counts
+count_data <- count_data[, order(colnames(count_data))]
+length(colnames(count_data))
+
+
+```
+
+## Import and clean samples dataframe
+```{r read-samples}
+
+#read in data
+df.samples = read.csv("./data/Sample_Info_Full.csv")
+
+#tidy data frame
+df.samples = df.samples %>% 
+
+  #Remove NA rows
+  filter(complete.cases(Sample_ID)) %>% 
+
+  #add an Outcome column
+  mutate(Outcome = case_when(
+    Response == "PD" ~ "Progressor",
+    Response == "PR" ~ "Responder",
+    Response == "CR" ~ "Responder")) %>% 
+  
+  #add a column with > or < median OS 
+  mutate(median_OS = ifelse(Overall_Survival_Months > median(Overall_Survival_Months), "Above_Median", "Below_Median")) %>% 
+  
+  #add column with high/low based on geometric mean division
+  mutate(TIL_High_Low = ifelse(Number_TIL_Infused >= median(Number_TIL_Infused), "High", "Low")) %>% 
+  
+  #add column of TIL infused scaled to billions
+  mutate(TIL_Infused_Billions = Number_TIL_Infused/10e9) %>% 
+
+  # RNA-seq only rows, CellTypes (CD4 and CD8), and samples
+  dplyr::mutate (Sample_ID2 = paste(Sample_ID, str_replace(Cell_Type, "_Positive", ""), sep="_"))   %>%
+  dplyr::filter (RNA.Seq == 'Yes', Sample_ID != 'Pt14', Cell_Type != 'Double_Positive') %>% 
+  dplyr::mutate (CellType2 = str_replace(Cell_Type, "_Positive", "") ) %>%
+  
+  #fix column data types
+  mutate(across(.cols = 
+        c("Trial", "Response", "Outcome",  "median_OS", "CellType2"),
+        as.factor)) %>% 
+  
+  #Arrange by "Sample_ID2"
+  arrange(Sample_ID2) %>% 
+  
+  #reorder columns
+  select("Sample_ID", "Sample_ID2", "CellType2", "Trial", "Response", "Outcome", "Number_TIL_Infused", "TIL_Infused_Billions", "PFS_Months", "PFS_Censor_at_12_Months", "Overall_Survival_Months", "Survival_Censor", "median_OS")
+
+# fix column names, dashes to dots
+colnames <- colnames(df.samples)
+colnames <- str_replace(colnames, "-", ".")
+colnames(df.samples) <- colnames
+
+datatable(df.samples, rownames = FALSE, filter="top", options = list(pageLength = 5, scrollX=T) )
+
+```
+
+
+## Sample and Count Data Divided by Celltype
+
+As we're analyzing CD4 and CD8 populations independently, use separate data frames.
+
+```{r clinical.data}
+
+###  clinical data 
+clinical_data_surv <- as.data.frame(df.samples)
+
+rownames(clinical_data_surv) <- clinical_data_surv$Sample_ID2
+nrow(clinical_data_surv)  
+
+# Number_TIL is too big for DESeq2 -> log transform log2(n+1)
+clinical_data_surv$Number_TIL_Log2 <- log2(clinical_data_surv$Number_TIL_Infused + 1)
+
+## Separate datasets completely for cell type
+clinical_data_cd4 <- clinical_data_surv %>%
+  dplyr::filter (clinical_data_surv$CellType2 == 'CD4')
+
+## Separate datasets completely for cell type
+clinical_data_cd8 <- clinical_data_surv %>%
+  dplyr::filter (clinical_data_surv$CellType2 == 'CD8')
+
+# display the columns we're about to drop as sanity check
+print("About to drop these from the count matrix:")
+colnames(count_data) [! colnames(count_data) %in% row.names(clinical_data_surv)]
+
+# select only columns in count_data where we have rownames
+count_data <- count_data %>%
+  dplyr::select (row.names(clinical_data_surv))
+
+# DESeq2 needs the column names of count data to match rownames of clinical data
+colnames(count_data)
+all(colnames(count_data) == rownames(clinical_data_surv))  #TRUE 
+
+# Count Data
+# -----------
+# CD4 
+count_data_cd4 <- count_data[,row.names(clinical_data_surv[clinical_data_surv$CellType2 == "CD4",])]
+median_til_cd4 = median(clinical_data_cd4$Number_TIL_Infused, na.rm = TRUE)
+median_til_cd4
+
+clinical_data_cd4 <- clinical_data_surv  %>%
+   dplyr::filter (clinical_data_surv$CellType2 == "CD4") %>%
+   dplyr::mutate (TILlowhi_CD4 = as.factor(if_else(Number_TIL_Infused > median(clinical_data_cd4$Number_TIL_Infused, na.rm = TRUE), "High", "Low")))
+  
+# CD8 only
+median_til_cd8 = median(clinical_data_cd8$Number_TIL_Infused, na.rm = TRUE)
+median_til_cd8
+count_data_cd8 <- count_data[,row.names(clinical_data_surv[clinical_data_surv$CellType2 == "CD8",])]
+median(clinical_data_cd8$Number_TIL_Infused, na.rm = TRUE)
+
+clinical_data_cd8 <- clinical_data_surv  %>%
+   dplyr::filter (clinical_data_surv$CellType2 == "CD8") %>%
+   dplyr::mutate (TILlowhi_CD8 = as.factor(if_else(Number_TIL_Infused >  median(clinical_data_cd8$Number_TIL_Infused, na.rm = TRUE), "High", "Low"))) 
+
+
+```
+
+** Quality Check **  
+
+DESeq2 requires the column names of the count matrix to match rownames of sample data which is `all(colnames(count_data) == rownames(clinical_data_surv)) `
+
+
+## DESeq2 on Low vs High on Number of TIL infused
+
+```{r deseq}
+
+dds_til_cd4_lowhi = DESeqDataSetFromMatrix(countData=count_data_cd4,
+                             colData=clinical_data_cd4,
+                             design = ~ TILlowhi_CD4)
+
+
+dds_til_cd8_lowhi = DESeqDataSetFromMatrix(countData=count_data_cd8,
+                             colData=clinical_data_cd8,
+                             design = ~ TILlowhi_CD8)
+
+# Calculate differential expression
+dds_til_cd4_lowhi = DESeq(dds_til_cd4_lowhi)
+dds_til_cd8_lowhi = DESeq(dds_til_cd8_lowhi)
+
+#remove genes with low expression in all samples
+dds_til_cd4_lowhi <- dds_til_cd4_lowhi[rowSums(counts(dds_til_cd4_lowhi)) > 10, ]
+nrow(dds_til_cd4_lowhi)
+
+dds_til_cd8_lowhi <- dds_til_cd8_lowhi[rowSums(counts(dds_til_cd8_lowhi)) > 10, ]
+nrow(dds_til_cd8_lowhi)
+
+#Names from the comparisons on DESeq (they are tricky to make the contrasts below)
+resultsNames(dds_til_cd4_lowhi)
+###  coefficents # "TILlowhi_CD4_Low_vs_High"
+
+#res <- results(dds_til_lowhi, name = "TILlowhi_Low_vs_High")
+res_cd4 <- results(dds_til_cd4_lowhi, name = "TILlowhi_CD4_Low_vs_High")
+res_cd8 <- results(dds_til_cd8_lowhi, name = "TILlowhi_CD8_Low_vs_High")
+summary(res_cd4)
+
+# Remove all rows with gene names starting with LOC followed by numbers
+nrow(res_cd4) # 32K
+row.names.to.rmv <- row.names(res_cd4)[grepl("^LOC[0-9]", row.names(res_cd4))]
+row.names.to.keep <- row.names(res_cd4)[!grepl("^LOC[0-9]", row.names(res_cd4))]
+res_cd4 <- res_cd4[row.names.to.keep,]
+nrow(res_cd4) # 23K
+
+nrow(res_cd8) # 35K
+row.names.to.rmv <- row.names(res_cd8)[grepl("^LOC[0-9]", row.names(res_cd8))]
+row.names.to.keep <- row.names(res_cd8)[!grepl("^LOC[0-9]", row.names(res_cd8))]
+res_cd8 <- res_cd8[row.names.to.keep,]
+nrow(res_cd8) # 25K
+
+
+res_cd4_ordered <- res_cd4[order(res_cd4$pvalue),]
+head(res_cd4_ordered)
+res_cd4_dt <- filter_de(res_cd4,0.1,0.1,0.5)  # was set to 0.05, 0.1, 2.
+export_csv(res_cd4_dt, "./res_lowhiTIL_CD4_sig.csv")
+# save dataframe
+data_df <- as.data.frame(res_cd4_ordered)
+export_csv(data_df, "./res_lowhiTIL_CD4_unfiltered.csv")
+
+res_cd8_ordered <- res_cd8[order(res_cd8$pvalue),]
+head(res_cd8_ordered)
+res_cd8_dt <- filter_de(res_cd8,0.1,0.1,0.5)  # was set to 0.05, 0.1, 2.
+
+nrow(res_cd8_dt)
+res_cd8_dt <- res_cd8_dt[!grepl("LOC[0-9]",rownames(res_cd8_dt), fixed = TRUE),]
+nrow(res_cd8_dt)
+
+export_csv(res_cd8_dt, "./res_lowhiTIL_CD8_sig.csv")
+# save dataframe
+data_df <- as.data.frame(res_cd8_ordered)
+export_csv(data_df, "./res_lowhiTIL_CD8_unfiltered.csv")
+
+volcano_plots <- list(plot_volcano(res_cd4,0.1,0.5,"Number of TIL Infused CD4+"),
+                      plot_volcano(res_cd8,0.1,0.5,"Number of TIL Infused CD8+"))
+volcano_plots
+
+
+plt_os_volcano_cd4 <- plot_volcano(res_cd4,0.1,0.5,"TIL Infused Low vs High CD4+ CellTypes")
+    ggsave(plt_os_volcano_cd4,
+      filename = "lowhitil_volcano_cd4.pdf",
+      height = 7, width=7,
+      dpi=600
+    )
+
+plt_os_volcano_cd8 <- plot_volcano(res_cd8,0.1,0.5,"TIL Infused Low vs High CD8+ CellTypes")
+    ggsave(plt_os_volcano_cd8,
+      filename = "lowhitil_volcano_cd8.pdf",
+      height = 7, width=7,
+      dpi=600
+    )
+    
+
+```
+
+```{r volcanos}
+
+plt_os_volcano_cd4
+plt_os_volcano_cd4
+
+```
+
+```{r}
+plots <- list(plt_os_volcano_cd4, plt_os_volcano_cd8)
+plots
+
+```
+
+
+#PCA
+Data preparation for PCA includes:
+- get normalized counts from DESeq2 object 
+- get sorted results for picking a subset of genes to PCA
+
+
+Top 5000 genes only, sorted by lowest p-value
+```{r pca}
+
+# normalized counts for PCA
+til_cd4_counts <- counts(dds_til_cd4_lowhi, normalized=TRUE)
+til_cd8_counts <- counts(dds_til_cd8_lowhi, normalized=TRUE)
+
+
+# order by pval then gene count cutoff
+# 
+CUTOFF = 5000
+#res_cd4_ordered_for_pca <- res_cd4[order(abs(res_cd4$log2FoldChange)),]
+#res_cd8_ordered_for_pca <- res_cd8[order(abs(res_cd8$log2FoldChange)),]
+res_cd4_ordered_for_pca <- res_cd4_ordered  # same as res_cd4[order(res_cd4$pvalue),]
+res_cd8_ordered_for_pca <- res_cd8_ordered
+
+til_cd4_counts <- til_cd4_counts[rownames(res_cd4_ordered_for_pca[1:CUTOFF,]),]
+nrow(til_cd4_counts)
+
+til_cd8_counts <- til_cd8_counts[rownames(res_cd8_ordered_for_pca[1:CUTOFF,]),]
+nrow(til_cd8_counts)
+
+
+count_matrix_cd4 <- t(as.matrix(til_cd4_counts))
+count_matrix_cd8 <- t(as.matrix(til_cd8_counts))
+
+pca_results_cd4 = prcomp(count_matrix_cd4, scale = TRUE)
+summary(pca_results_cd4)
+pca_var_cd4 = pca_results_cd4$sdev^2/sum(pca_results_cd4$sdev^2)
+
+pca_results_cd8 = prcomp(count_matrix_cd8, scale = TRUE)
+summary(pca_results_cd8)
+pca_var_cd8 = pca_results_cd8$sdev^2/sum(pca_results_cd8$sdev^2)
+
+
+vars <- apply(pca_results_cd4$x, 2, var)
+# proportion of variance
+props <- vars / sum(vars)
+props
+props[1:3]
+# Cumulative Proportions (for each PC)
+cumsum(props)
+cumsum(props)[1]
+    
+# formatting
+# geom_point(aes(color = numeric_counts_matrix$group), size = 3) + 
+#   #labs (title = "Test CD4 RNA-seq") +
+#   theme_test() + theme(element_line(size = 1)) +
+#   theme(panel.border = element_rect(size=1.5)) +
+#   theme(axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15))
+
+#title_supp <- " for top 5000 genes by pvalue"
+title_supp <- ""
+plt_pca1_cd4_pv <- ggplot(as.data.frame(pca_results_cd4$x), aes(x=PC1, y=PC2)) +
+      geom_point(aes(color = clinical_data_cd4$TILlowhi_CD4), 
+                     size = 6) +
+      scale_color_manual(values = c("blue", "red")) +
+      scale_fill_discrete(name ='Number TIL Infused') +
+      xlab(paste("PC1", percent(props[1]))) +
+      ylab(paste("PC2", percent(props[2]))) +
+      labs (title = paste("CD4 PCA by TIL Infused (Low/High)", title_supp)) +
+      theme_test() + theme(element_line(size = 1)) +
+      theme(panel.border = element_rect(size=1.5)) +
+      theme(axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15)) +
+      theme(legend.position = "top")
+
+  
+plt_pca1_cd4_pv  
+      
+plt_pca2_cd4_pv <- ggplot(as.data.frame(pca_results_cd4$x), aes(x=PC2, y=PC3)) +
+      geom_point(aes(color = clinical_data_cd4$TILlowhi_CD4), size = 3) +
+      scale_color_manual(values = c("blue", "red", "green")) +
+      #geom_text(aes(label=clinical_df$Sample_ID)) + 
+      xlab(paste("PC2", percent(props[2]))) +
+      ylab(paste("PC3", percent(props[3]))) +
+      labs (title = paste("CD4 PCA by TIL Infused (Low/High)", title_supp), fill='Number TIL Infused') +
+theme_test() + theme(element_line(size = 1)) +
+  theme(panel.border = element_rect(size=1.5)) +
+  theme(axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15)) +
+  theme(legend.position = "top")
+
+
+# need props for CD8
+vars <- apply(pca_results_cd8$x, 2, var)
+# proportion of variance
+props <- vars / sum(vars)
+props
+props[1:3]
+# Cumulative Proportions (for each PC)
+cumsum(props)
+cumsum(props)[1]
+    
+
+plt_pca1_cd8_pv <- ggplot(as.data.frame(pca_results_cd8$x), aes(x=PC1, y=PC2)) +
+      geom_point(aes(color = clinical_data_cd8$TILlowhi_CD8), size = 3) +
+      scale_color_manual(values = c("blue", "red", "green")) +
+      #geom_text(aes(label=clinical_df$Sample_ID)) + 
+      xlab(paste("PC1", percent(props[1]))) +
+      ylab(paste("PC2", percent(props[2]))) +
+      labs (title = paste("CD8 PCA by TIL Infused (Low/High)", title_supp)) +
+      
+theme_test() + theme(element_line(size = 1)) +
+  theme(panel.border = element_rect(size=1.5)) +
+  theme(axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15))+
+    theme(legend.position = "top")
+      
+plt_pca2_cd8_pv <- ggplot(as.data.frame(pca_results_cd8$x), aes(x=PC2, y=PC3)) +
+      geom_point(aes(color = clinical_data_cd8$TILlowhi_CD8), size = 3) +
+      scale_color_manual(values = c("blue", "red", "green")) +
+      #geom_text(aes(label=clinical_df$Sample_ID)) + 
+      xlab(paste("PC2", percent(props[2]))) +
+      ylab(paste("PC3", percent(props[3]))) +
+      labs (title = paste("CD8 PCA by TIL Infused (Low/High)", title_supp), fill='Number TIL Infused') +
+theme_test() + theme(element_line(size = 1)) +
+  theme(panel.border = element_rect(size=1.5)) +
+  theme(axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15))+
+    theme(legend.position = "top")
+
+  ggsave(
+      filename = paste0("rna-seq-cd4-tillowhigh-pca_1.pdf"),
+      plot = plt_pca1_cd4_pv,
+      #height = 7, width=7,
+      dpi=600
+  )
+  ggsave(
+      filename = paste0("rna-seq-cd4-tillowhigh-pca_2.pdf"),
+      plot = plt_pca2_cd4_pv,
+      #height = 7, width=7,
+      dpi=600
+  )
+  ggsave(
+      filename = paste0("rna-seq-cd8-tillowhigh-pca_1.pdf"),
+      plot = plt_pca1_cd8_pv,
+      #height = 7, width=7,
+      dpi=600
+  )
+  ggsave(
+      filename = paste0("rna-seq-cd8-tillowhigh-pca_2.pdf"),
+      plot = plt_pca2_cd8_pv,
+      #height = 7, width=7,
+      dpi=600
+  )
+    
+    
+
+plts2 <- list(plt_pca1_cd4_pv, plt_pca2_cd4_pv, plt_pca1_cd8_pv, plt_pca2_cd8_pv)
+plts2
+
+plt_scree_cd4 <- gen_scree(pca_results_cd4, pca_var_cd4)
+plt_scree_cd8 <- gen_scree(pca_results_cd8, pca_var_cd8)
+
+
+ggsave(plt_scree_cd4,
+      filename = "lowhightil_scree_cd4.pdf",
+      #height = 7, width=7,
+      dpi=600
+    )
+ggsave(plt_scree_cd8,
+      filename = "lowhightil_scree_cd8.pdf",
+      #height = 7, width=7,
+      dpi=600
+    )
+
+plt_scree_cd4
+
+```
+
+
+#Loadings plot
+```{r loadings, include=FALSE}
+# pca_results$rotation
+# 
+# ggplot(as.data.frame(pca_results$x), aes(x=PC1, y=PC2)) +
+#   #geom_point() +
+#   geom_segment(data = as.data.frame(pca_results$rotation), aes(xend = 15, yend = 15))
+#   annotate("text")
+  
+gen_loadings <- function(count_matrix) {
+   # Arguments: count_matrix 
+
+   pca_results = prcomp(count_matrix, scale = TRUE)
+   
+    plot <- fviz_pca_var(pca_results, col.var = "contrib", gradient.cols = c("blue", "green", "orange", "red"), repel = TRUE, col.circle = "white")
+  
+   return(plot)
+   
+}
+
+rownames(res_cd4_dt)
+colnames(count_matrix_cd4)
+# only the (close to) significant genes
+count_matrix2 <- count_matrix_cd4[,colnames(count_matrix_cd4) %in% rownames(res_cd4_dt)]
+til_loadings_plt <- gen_loadings(count_matrix2)
+print(til_loadings_plt)
+
+```
+
+
+# Export data for GSEA purposes, in special formats
+
+Setup for GSEA Data 
+```{r gsea, include=FALSE}
+    
+# To run this, we expect to have dds_til_wpct_cd4_lowhi and dds_til_wpct_cd8_lowhi
+# but since we are filtering less than in the prior analysis, we'll use copies
+
+dds_til_cd4_gsea = DESeqDataSetFromMatrix(countData=count_data_cd4,
+                             colData=clinical_data_cd4,
+                             design = ~ TILlowhi_CD4)
+
+dds_til_cd8_gsea = DESeqDataSetFromMatrix(countData=count_data_cd8,
+                             colData=clinical_data_cd8,
+                             design = ~ TILlowhi_CD8)
+
+    #Calculate differential expression
+    dds_til_cd4_gsea = DESeq(dds_til_cd4_gsea)
+    dds_til_cd8_gsea = DESeq(dds_til_cd8_gsea)
+    # dds_til_lowhi = DESeq(dds_til_lowhi)
+
+    #remove genes with zero expression in all samples. before, count: 59,256
+    dds_til_cd4_gsea <- dds_til_cd4_gsea[rowSums(counts(dds_til_cd4_gsea)) > 0, ]
+    nrow(dds_til_cd4_gsea)
+    # after rmv zeros, 37,367  ( so about 22K rmved), another 5K are low counts < 10 (raw)
+     
+    dds_til_cd8_gsea <- dds_til_cd8_gsea[rowSums(counts(dds_til_cd8_gsea)) > 0, ]
+    nrow(dds_til_cd8_gsea)
+    # after rmv zeros, 39,411 (about 20K rows rmved)
+    
+    #res <- results(dds_til_lowhi, name = "TILlowhi_Low_vs_High")
+    res_cd4_gsea <- results(dds_til_cd4_gsea, name = "TILlowhi_CD4_Low_vs_High")
+    res_cd8_gsea <- results(dds_til_cd8_gsea, name = "TILlowhi_CD8_Low_vs_High")
+    summary(res_cd4_gsea)
+
+    # Removes all rows with gene names starting with LOC followed by numbers 
+    nrow(res_cd4_gsea) # 37K
+    nrow(res_cd8_gsea) # 39K
+
+res_cd4_gsea_ordered <- res_cd4_gsea[order(res_cd4_gsea$pvalue),]
+res_cd8_gsea_ordered <- res_cd8_gsea[order(res_cd8_gsea$pvalue),]
+
+split_ensg <- function (ensg_genes, token="-"){
+  # given a string of gene names starting with ENSG, tokenize and return list with 1 or 2 elements
+  # the first list item is gene1 and the optional 2nd has the remaining
+  
+  # ensg_genes <- "ENSG00000261846-ENSG00000197953-ENSG000003-ENSG000004"
+  if (startsWith(ensg_genes, "ENSG")){
+      token_list <- strsplit(ensg_genes, split=token)
+      gene1 <- unlist(token_list)[1]
+      if(length(unlist(token_list)) >1){
+        genes <- unlist(token_list)[2:length(unlist(token_list))]
+        genes2 <- paste(genes, collapse="-")
+      }
+      else {
+        genes2 <- ""
+      }
+  }
+  else {
+    gene1 <- ensg_genes
+    genes2 <- ""
+  }
+  return(c(gene1, genes2))
+}    
+    
+
+# Export normalized data for GSEA
+# paranoid extra step:
+dds_til_cd4_gsea <- estimateSizeFactors(dds_til_cd4_gsea)
+cd4_count_mtx <- as.data.frame(counts(dds_til_cd4_gsea, normalized=TRUE))
+cd4_count_mtx$description <- rownames(cd4_count_mtx)
+cd4_count_mtx$ens_ids <- as.character(get_ensembl_symbols(cd4_count_mtx))   
+
+# can i still have rows with all zeros?
+cd4_count_mtx[rowSums(cd4_count_mtx[1:12]) == 0,]
+
+cd4_count_mtx$additional_ensg  <- as.character(lapply(cd4_count_mtx$ens_ids, function(x) split_ensg(x)[2]))
+rownames(cd4_count_mtx) <- as.character(lapply(cd4_count_mtx$ens_ids, function(x) unlist(split_ensg(x)[1])))
+
+# drop ens_ids column
+colnames(cd4_count_mtx) [!colnames(cd4_count_mtx) %in% c('ens_ids')]
+cd4_count_mtx <- cd4_count_mtx %>%
+   dplyr::select(colnames(cd4_count_mtx) [!colnames(cd4_count_mtx) %in% c('ens_ids')])
+
+dds_til_cd8_gsea <- estimateSizeFactors(dds_til_cd8_gsea)
+cd8_count_mtx <- as.data.frame(counts(dds_til_cd8_gsea, normalized=TRUE))
+cd8_count_mtx$description <- rownames(cd8_count_mtx)
+#rownames(cd8_count_mtx) <- get_ensembl_symbols(cd8_count_mtx)  
+
+cd8_count_mtx$ens_ids <- get_ensembl_symbols(cd8_count_mtx)    
+
+cd8_count_mtx$additional_ensg  <- as.character(lapply(cd8_count_mtx$ens_ids, function(x) split_ensg(x)[2]))
+rownames(cd8_count_mtx) <- as.character(lapply(cd8_count_mtx$ens_ids, function(x) unlist(split_ensg(x)[1])))
+
+cd8_count_mtx <- cd8_count_mtx %>%
+   dplyr::select(colnames(cd8_count_mtx) [!colnames(cd8_count_mtx) %in% c('ens_ids')])
+
+nrow(cd4_count_mtx)
+print(paste('Number of rows to export for GSEA for CD4', nrow(cd4_count_mtx )))
+print(paste('Number of rows to export for GSEA for CD8', nrow(cd8_count_mtx )))
+
+# export csvs 
+dir.create('./counting', showWarnings = FALSE)
+write_gct(cd4_count_mtx,"./counting/dds_TILlowhi_norm_counts_cd4_all.gct")
+write_gct(cd8_count_mtx,"./counting/dds_TILlowhi_norm_counts_cd8_all.gct")
+
+
+```
+```{r}
+sessionInfo()
+```
+

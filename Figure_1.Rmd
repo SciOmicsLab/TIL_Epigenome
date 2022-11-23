@@ -1,0 +1,121 @@
+---
+title: "Figure_1"
+author: "SciOmics Lab"
+date: "2022-11-21"
+output: pdf
+---
+
+# Load Libraries
+```{r}
+library(dplyr)
+library(ggplot2)
+library(survival)
+library(survminer)
+library(gtsummary)
+```
+
+## Import data
+```{r}
+
+#read in data
+df = read.csv("data/Sample_Info.csv")
+
+```
+
+# TIL Infused vs. Overall Survival 
+```{r}
+
+#Panel A
+
+#Cox PH
+coxph_model_TIL_OS = coxph(Surv(Overall_Survival_Months, Survival_Censor) ~ TIL_Infused_Billions, data = df) 
+
+#Plot
+ggplot(df, aes(x=TIL_Infused_Billions, y=Overall_Survival_Months, shape=as.factor(Survival_Censor))) +
+  geom_point(size=3) +
+  theme_classic() + 
+  labs(shape = "Censoring") +
+  xlab(label = "Number of TIL Infused (Billions)") +
+  ylab(label = "Overall Survival (Months)") +
+  scale_shape_discrete(name = "Censoring", labels = c("Censored", "Not Censored")) +
+  scale_shape_manual(values=c(1, 19)) +
+  annotate("text", x = 20, y = 100, label = paste("R² =", round(summary(coxph_model_TIL_OS)$rsq[1], 2))) +
+  annotate("text", x = 20, y = 95, label = paste("p =", round(summary(coxph_model_TIL_OS)$waldtest[3], 5)))
+
+
+```
+
+# Overall Survival of TIL High vs. TIL Low
+```{r}
+
+#Panel B
+
+#Cox PH
+coxph(Surv(Overall_Survival_Months, Survival_Censor) ~ TIL_High_Low, data = df) %>% 
+  gtsummary::tbl_regression(exp = TRUE)
+
+#Plot
+ggsurvplot(
+  fit = survfit(Surv(Overall_Survival_Months, Survival_Censor) ~ TIL_High_Low, data = df),
+  xlab = "Months",
+  ylab = "Overall Survival",
+  pval = FALSE,
+  risk.table = TRUE,
+  palette = c("blue", "red"),
+  tables.height = 0.3
+)
+
+```
+
+# Percent CD4 vs. Number of TIL Infused
+```{r}
+
+#Panel C
+
+#polynomial regression
+model_poly2= lm(TIL_Infused_Billions ~ poly(Percent_CD4, 2, raw = TRUE), data=df)
+summary(model_poly2)
+
+#plot
+ggplot(df, aes(x=TIL_Infused_Billions, y=Percent_CD4, color=median_OS)) +
+  geom_point(size = 3) +
+  geom_smooth(
+    method = "lm", 
+    formula = y ~ poly(x, 2), 
+    se = FALSE, 
+    linetype = "dashed", 
+    color = "purple") +
+  annotate("text", x = 10, y = 1, label = paste("R² =", round(summary(model_poly2)$r.squared, 2))) +
+  annotate("text", x = 10, y = 0.95, label = paste("p =", round(summary(model_poly2)$coefficients[2,4], 6))) +
+  scale_color_manual(values = c("blue", "red")) +
+  ylim(0,1) +
+  xlim(0,120) +
+  xlab(label = "Number of TIL Infused (Billions)") +
+  ylab(label ="%CD4") +
+  theme_classic()
+
+```
+
+# 
+```{r}
+
+#Panel D
+
+#Cox PH
+coxph_model_CD4_OS = coxph(Surv(Overall_Survival_Months, Survival_Censor) ~ Percent_CD4, data = df) 
+
+#Plot
+ggplot(df, aes(x=Percent_CD4, y=Overall_Survival_Months, shape=as.factor(Survival_Censor))) +
+  geom_point(size=3) +
+  theme_classic() + 
+  labs(shape = "Censoring") +
+  xlab(label = "Percent CD4") +
+  ylab(label = "Overall Survival (Months)") +
+  scale_shape_discrete(name = "Censoring", labels = c("Censored", "Not Censored")) +
+  scale_shape_manual(values=c(1, 19)) +
+  annotate("text", x = 0.8, y = 120, label = paste("R² =", round(summary(coxph_model_CD4_OS)$rsq[1], 2))) +
+  annotate("text", x = 0.8, y = 115, label = paste("p =", round(summary(coxph_model_CD4_OS)$waldtest[3], 5)))
+
+```
+
+  
