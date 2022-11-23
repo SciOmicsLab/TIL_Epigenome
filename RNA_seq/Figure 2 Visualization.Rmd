@@ -1,0 +1,290 @@
+---
+title: "RNAseq_visualizations"
+author: "Brian Thompson"
+date: "2022-11-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+```
+
+```{r install packages}
+library(dplyr)
+library(heatmaply)
+library(ggpubr)
+library(RColorBrewer)
+library(gplots)
+library(tidyverse)
+library(tidyr)
+library(EnhancedVolcano)
+library(readxl)
+library(survival)
+```
+
+```{r load data, echo=FALSE}
+#Loading in the normalized counts data
+df <- read.delim("../data/dds_TILlowhi_norm_counts_cd4_all.gct", header=FALSE, comment.char="#")
+
+#Remove top line
+df<- df[-c(1),-c(15)]
+df
+
+#Updating header
+names(df) <- df[1,]
+df <- df[-1,]
+df
+df<-as_tibble(df)
+df
+df[,c(3:14)] <- lapply(df[,c(3:14)], as.numeric)
+df <- as_tibble(df)
+
+
+#Plot top 30 diff genes 
+
+top_degs<-read.csv("../data/res_lowhiTIL_CD4_unfiltered.csv")
+
+top_degs_filter <-  top_degs %>%
+  dplyr::filter((log2FoldChange > 0.58 | log2FoldChange < -.58))
+
+top30 <- top_degs_filter[1:30,]
+top30 <- as_tibble(top30)
+colnames(top30)[which(names(top30) == "X")] <- "description"
+
+merged_RNA <- merge(top30, df,by="description")
+merged_RNA
+
+top30_geneset <- merged_RNA[,-c(2:8)]
+top30_geneset <- as_tibble(top30_geneset)
+```
+
+
+```{r annotating patient samples}
+#read in data
+df1 = read.csv("../data/Sample_Info_Full.csv")
+#tidy data frame
+df1 = df1 %>% 
+  #remove duplicate Sample IDs
+  filter(!duplicated(Sample_ID)) %>% 
+  
+  #Remove NA rows
+  filter(complete.cases(Sample_ID)) %>% 
+  
+  #Arrange by "Sample_ID"
+  arrange(Sample_ID) %>% 
+  
+  #add an Outcome column
+  mutate(Outcome = case_when(
+    Response == "PD" ~ "Progressor",
+    Response == "PR" ~ "Responder",
+    Response == "CR" ~ "Responder")) %>% 
+  
+  #add a column with > or < median OS 
+  mutate(median_OS = ifelse(Overall_Survival_Months > median(Overall_Survival_Months), "Above_Median", "Below_Median")) %>% 
+  
+  #add column with high/low based on geometric mean division
+  mutate(TIL_High_Low = ifelse(Number_TIL_Infused >= median(Number_TIL_Infused), "High", "Low")) %>% 
+  
+  #add column of TIL infused scaled to billions
+  mutate(TIL_Infused_Billions = Number_TIL_Infused/10e9) %>% 
+  
+  #modify the CD4 infusion percentage to drop "%" and convert to numeric ***NOT WORKING***
+  mutate(Percent_CD4 = as.numeric(gsub("%", "", Infusion_Percent_CD4))/100) %>% 
+  #modify the CD8 infusion percentage to drop "%" and convert to numeric ***NOT WORKING***
+  mutate(Percent_CD8 = as.numeric(gsub("%", "", Infusion_Percent_CD8))/100) %>% 
+  
+  #create a column for CD4 High/Low
+  mutate(CD4_High_Low = ifelse(Percent_CD4 >= median(Percent_CD4), "High", "Low")) %>% 
+  
+  #add binary outcome column
+  mutate(Outcome_binary = ifelse(Outcome == "Responder", 1, 0)) %>% 
+  #fix column data types
+  mutate(across(.cols = 
+                  c("Trial", "Response", "Outcome", "Outcome_binary", "TIL_High_Low", "CD4_High_Low", "median_OS"),
+                as.factor)) %>% 
+  #reorder columns
+  select("Sample_ID" , "median_OS")
+
+```
+
+
+
+ 
+```{r top 30 genes heatmap}
+heatmap.2(as.matrix(top30_geneset[2:ncol(top30_geneset)]), cexRow = 0.6, cexCol = 0.6, scale="row", trace = "none", margins = c(7,5), key = FALSE, labRow = top30_geneset$description, Rowv = TRUE, Colv = TRUE
+          , col=rev(brewer.pal(11,"RdBu")), ColSideColors = c("light green", "light green", "light green", "orange", "orange", "light green", 
+                                                       "orange", "light green", "orange", "orange", "orange", "light green")) ####Note 
+```
+
+
+```{r heatmap of genes from IPA}
+df_ipa <- df %>% filter((description == "IL5" | description == "IL13" | description == "IL2RA" | description == "PTGDR2" | description == "TNFRSF4" | 
+                           description == "TNFSF11" | description == "LIF" | description == "OSM"))
+
+heatmap.2(as.matrix(df_ipa[3:ncol(df_ipa)]), cexRow = 0.6, cexCol = 0.6, scale="row", trace = "none", margins = c(7,5), key = TRUE, labRow = df_ipa$description,
+          sepcolor = "grey", sepwidth = c(0.001,0.001), colsep =  c(1:ncol(df)), rowsep = c(1:nrow(df)), dendrogram= "column", col=rev(brewer.pal(11,"RdBu")))
+```
+
+```{r dotplot of key}
+df_ipa_long <- df_ipa %>% pivot_longer(cols=c(3:14),
+                    names_to='Sample',
+                    values_to='Counts')
+
+
+df_ipa_long <- df_ipa_long %>%
+  mutate(TIL = case_when(Sample == "16" ~ "low", Sample == "17" ~ "low", Sample == "22" ~ "low", Sample == "12" ~ "low", Sample == "15" ~ "low", Sample == "21" ~ "low", 
+                         Sample == "23" ~ "high", Sample == "14" ~ "high", Sample == "18" ~ "high", Sample == "19" ~ "high", Sample == "13" ~ "high", Sample == "20" ~ "high"))
+
+
+mean <- df_ipa_long %>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts)) 
+
+IL5 <- df_ipa_long %>% dplyr::filter( description == "IL5")
+IL5_mean <- IL5%>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
+IL13 <- df_ipa_long %>% dplyr::filter( description == "IL13")
+IL13_mean <- IL13%>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
+IL2RA <- df_ipa_long %>% dplyr::filter( description == "IL2RA")
+IL2RA_mean <- IL2RA%>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
+PTGDR2 <- df_ipa_long %>% dplyr::filter( description == "PTGDR2")
+PTGDR2_mean <- PTGDR2%>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
+TNFRSF4 <- df_ipa_long %>% dplyr::filter( description == "TNFRSF4")
+TNFRSF4_mean <- TNFRSF4%>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
+TNFSF11 <- df_ipa_long %>% dplyr::filter( description == "TNFSF11")
+TNFSF11_mean <- TNFSF11%>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
+LIF <- df_ipa_long %>% dplyr::filter( description == "LIF")
+LIF_mean <- LIF%>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
+
+OSM <- df_ipa_long %>% dplyr::filter( description == "OSM")
+OSM_mean <- OSM%>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
+ggplot(df_ipa_long, aes(description, Counts)) + geom_point(aes(color = TIL), position = position_jitterdodge(dodge.width = 0.9), size = 2.5) +
+  scale_color_manual(values = c("blue", "red")) + 
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(vjust = 0.5, face = "italic", size = 15, color = "black")) + labs(x = "Gene", y = "Normalized Counts") + 
+  theme(axis.text.y = element_text(size = 15, color = "black")) + theme(legend.text = element_text(size = 8)) + theme(axis.title.y = element_text(size = 18)) + theme(legend.position = "none") +
+  geom_vline(xintercept = c(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5), color= "grey") + 
+  theme(panel.border = element_rect(fill=NA, colour = "black", size=.75)) +
+  geom_segment(aes(x = .5,xend = .98, y=239, yend = 239), color = "blue", size = .75) + geom_segment(aes(x = 1.05,xend = 1.45, y=1357, yend = 1357), color = "red", size = 0.75) + 
+  geom_segment(aes(x = 1.55,xend = 1.98, y=3171, yend = 3171), color = "blue", size = 0.75) + geom_segment(aes(x = 2.05,xend = 2.45, y=7023, yend = 7023), color = "red", size = 0.75) + 
+  geom_segment(aes(x = 2.55,xend = 2.98, y=160, yend = 160), color = "blue", size = 0.75) + geom_segment(aes(x = 3.05,xend = 3.45, y=1153, yend = 1153), color = "red", size = 0.75) +
+  geom_segment(aes(x = 3.55,xend = 3.98, y=256, yend = 256), color = "blue", size = 0.75) + geom_segment(aes(x = 4.05,xend = 4.45, y=1082, yend = 1082), color = "red", size = 0.75) +
+  geom_segment(aes(x = 4.55,xend = 4.98, y=297, yend = 297), color = "blue", size = 0.75) + geom_segment(aes(x = 5.05,xend = 5.45, y=1226, yend = 1226), color = "red", size = 0.75) + 
+  geom_segment(aes(x = 5.55,xend = 5.98, y=12.9, yend = 12.9), color = "blue", size = 0.75) + geom_segment(aes(x = 6.05,xend = 6.45, y=155, yend = 155), color = "red", size = 0.75) +
+  geom_segment(aes(x = 6.55,xend = 6.98, y=271, yend = 271), color = "blue", size = 0.75) + geom_segment(aes(x = 7.05,xend = 7.45, y=1680, yend = 1680), color = "red", size = 0.75) + 
+  geom_segment(aes(x = 7.55,xend = 7.98, y=75.5, yend = 75.5), color = "blue", size = 0.75) + geom_segment(aes(x = 8.05,xend = 8.45, y=424, yend = 424), color = "red", size = 0.75)
+```
+
+```{r IPA results}
+# IPA_df <- read_xlsx("IPA Dataframe.xlsx")
+# IPA_df$Activation <- as.factor(IPA_df$Activation)
+
+
+# ggplot(IPA_df, aes(reorder(Pathway, FDR), FDR, fill = Activation)) + 
+#  geom_col(color = "black") + 
+#  scale_fill_manual(values = c("#0000FF", "#808080", "#FFA500", "#FFFFFF")) +
+#  labs(y="Pathway", x= bquote(~-Log[10] ~ FDR)) +
+#  theme_classic() + 
+#  theme(axis.text.y = element_text(size = 10)) +
+#  scale_x_discrete(labels = function(y) str_wrap(y, width = 20)) +
+#  coord_flip() 
+```  
+
+```{r RNA-seq score}
+(degs_filter_score <-  top_degs %>%
+  dplyr::filter(log2FoldChange > 0.58 & padj < 0.1))
+
+(gene_list <- degs_filter_score %>% 
+  dplyr::select(X))
+
+gene_list <- unname(unlist(gene_list[,1]))
+
+gene_list
+
+
+(gene_score <- df %>% dplyr::filter(description %in% gene_list))
+(gene_score <- gene_score[,-1])
+
+#Selecting only the needed columns
+(avg <- gene_score  %>% mutate(average = rowMeans(gene_score[,2:ncol(gene_score)])))
+
+sum(avg$average) #61004.19
+
+weight1 <- avg %>% rowwise() %>% mutate(weight = (average/61004.19))
+weight1 <- as.data.frame(weight1)
+weight <- weight1$weight
+
+scale2 <- function(x, na.rm = FALSE) (x * weight)
+computed <- weight1 %>% mutate_at(colnames(weight1[,2:ncol(weight1)]), scale2)
+(computed <- computed[,-1])
+
+t <- t(computed)
+t <- as.data.frame(t)
+sample_sums <- t %>% mutate(sample_sum = rowSums(t))
+
+#Remove extra characters from the sample_ID to enable joining with the OS data
+sample_sums$names <- rownames(sample_sums)
+(sample_sums <- sample_sums[-c(13:14),])
+
+sample_sums$names <- gsub("_CD4", '', sample_sums$names)
+sample_sums$names <- gsub("X", '', sample_sums$names)
+sample_sums$names <- as.numeric(sample_sums$names)
+ncol(sample_sums) #24
+colnames(sample_sums) [24] <- "Sample_ID"
+
+sample_info <- read_xlsx("Sample_Info.xlsx")
+sample_info <- sample_info %>% filter(!duplicated(Sample_ID))
+sample_info <- sample_info %>% mutate(median_OS = ifelse(Overall_Survival_Months > median(Overall_Survival_Months), "Above_Median", "Below_Median")) 
+  
+#Adding in the OS data
+(OS <- sample_info %>% dplyr::select(Sample_ID,Overall_Survival_Months, Survival_Censor, Number_TIL_Infused, median_OS))
+(sample_sums_join <- inner_join(sample_sums, OS, by = "Sample_ID"))
+colnames(sample_sums_join) [25] <- "OS"
+ggscatter(sample_sums_join, x = "Number_TIL_Infused", y = "sample_sum", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "OS", ylab = "Score", label = "Sample_ID") 
+
+#Adding in the censored data
+coxph_model_SCORE_OS = coxph(Surv(OS, Survival_Censor) ~ sample_sum, data = sample_sums_join) 
+
+ggplot(sample_sums_join, aes(x=sample_sum, y=OS, shape=as.factor(Survival_Censor))) +
+  geom_point(size=4) +
+  theme_classic() + 
+  labs(shape = "Censoring") +
+  xlab(label = "CD4+ T-Cell Polarization Score") +
+  ylab(label = "Overall Survival (Months)") +
+  scale_shape_discrete(name = "Censoring", labels = c("Censored", "Not Censored")) +
+  scale_shape_manual(values=c(1, 19)) +
+  annotate("text", size = 6, x = 7000, y = 125, label = paste("R² =", round(summary(coxph_model_SCORE_OS)$rsq[1], 2))) +
+  annotate("text", size = 6, x = 7000, y = 120, label = paste("p =", round(summary(coxph_model_SCORE_OS)$waldtest[3], 5))) + 
+  theme(axis.text = element_text(size = 15, color = "black"), axis.title = element_text(size = 20),
+        legend.text = element_text(size = 15), legend.title = element_text(size = 15), 
+        legend.position = c(0.90, 0.5))
+```  
+
+

@@ -27,18 +27,19 @@ All statistical analyses and data visualizations were performed with R, or withi
 1. File/directory setup  
 First clone the git repo, download the fastq files and set up in a folder structure like:    
  ./RNA_seq/fastq/    
- ./RNA_seq/**script files to go here**  
- ./RNA_seq/counts/**count matrix to go here** 
- ./ChIP_seq/group_1_fastq/**ChIPseq group1 files can be identified by \*Moff_Pt\*.fastq.gz and \*Moff_Pooled\*.fastq.gz** 
- ./ChIP_seq/group_2_fastq/**remaining fastq files are ChIPseq group2**  
- ./ChIP_seq/**script files to go here**  
- ./ChIP_seq/peaks_group1**group1 peaks files to go here**
- ./ChIP_seq/peaks_group2**sgroup2 peaks files to go here**
- ./genome/download NCBI genome and GTF here  
+ ./RNA_seq/  **cript files to go here**  
+ ./RNA_seq/counts/   **count matrix to go here**  
+ ./ChIP_seq/group_1_fastq/  **ChIPseq group1 files can be identified by \*Moff_Pt\*.fastq.gz and \*Moff_Pooled\*.fastq.gz**   
+ ./ChIP_seq/group_2_fastq/  **remaining fastq files are ChIPseq group2**  
+ ./ChIP_seq/   **script files to go here**  
+ ./ChIP_seq/peaks_group1   **group1 peaks files to go here**
+ ./ChIP_seq/peaks_group2   **sgroup2 peaks files to go here**
+ ./data   **sample metadata files and supplementatry data files** 
+ ./genome/    **download NCBI genome and GTF here**   
 
  Genomic Sequence Downloads:  
   [GRCh38 for RNAseq](https://www.ncbi.nlm.nih.gov/projects/genome/guide/human/index.shtml#download)  See the HiSAT2 manual for using this genome to build a HiSAT2 index.  
-  [GRCh38 for Chipseq](https://genome-idx.s3.amazonaws.com/bt/GRCh38_noalt_as.zip) See Bowtie2 help for building an indexed version. 
+  [GRCh38 for Chipseq](https://genome-idx.s3.amazonaws.com/bt/GRCh38_noalt_as.zip) See Bowtie2 help for building an indexed version.  
   [RefSeq GTF](https://www.ncbi.nlm.nih.gov/data-hub/genome/GCF_000001405.40/) 
 
 2. RNA-seq Pre-processing  
@@ -59,6 +60,6 @@ First clone the git repo, download the fastq files and set up in a folder struct
 
  5. ChIP-seq downstream analysis, from the ChIP_Seq/ dir, use R Studio to run:  
  - ChIP-seq.Rmd
- - You can make your own peakset file to use in DiffBind, but we recommend using our peakset files located in XXXXXXX as some duplicate samples and a low quality sample were removed by their position in the peakset files.  
+ - You can make your own peakset file to use in DiffBind, but we recommend using our peakset files located in ./data as some duplicate samples and a low quality sample were removed by their position in the peakset files.  
 
 
