@@ -3,7 +3,7 @@ title: "TIL ACT ChIP-seq"
 output:
   html_document: default
   pdf_document: default
-date: "2022-10-19"
+date: "Updated 2023-03-31"
 fig_width: 8 
 fig_height: 8 
 ---
@@ -189,7 +189,7 @@ dev.off()
 Based on results from ssGSEA (which were calculated using python), DACs are suggestive of altered CD8+ activation. Therefore, I focused on the DACs that are known to be involved in T-cell activation
 ```{r activation dot plots}
 
-df_list <- filtered_merged_datasets %>% filter((gene_symbol == "APOBEC3G" | gene_symbol == "SSH1" | gene_symbol == "CD200" | gene_symbol == "ZEB2" | gene_symbol == "PTPRK"))
+df_list <- filtered_merged_datasets %>% filter((gene_symbol == "APOBEC3G" | gene_symbol == "SSH1" | gene_symbol == "CD200" | gene_symbol == "ZEB2" | gene_symbol == "PTPRK" | gene_symbol == "IGFBP3"))
 df_list <- df_list[-3,] 
 
 df_list_long <- df_list %>% pivot_longer(cols=c(24:40),
@@ -229,6 +229,11 @@ CD200_mean <- CD200 %>%
   group_by(TIL) %>% 
   summarise(mean_val = mean(Counts))
 
+IGFBP3 <- df_list_long %>% dplyr::filter(gene_symbol == "IGFBP3")
+IGFBP3_mean <- IGFBP3 %>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
 
 
 dotplot_CD8 <- ggplot(df_list_long, aes(gene_symbol, Counts)) + geom_point(aes(color = TIL), position = position_jitterdodge(dodge.width = 0.9), size = 3.0) +
@@ -237,13 +242,14 @@ dotplot_CD8 <- ggplot(df_list_long, aes(gene_symbol, Counts)) + geom_point(aes(c
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
   theme(axis.text.x = element_text(vjust = 0.5, face = "italic", size = 15, color = "black")) + labs(x = "Gene", y = "Normalized Counts") + 
   theme(axis.text.y = element_text(size = 15, color = "black")) + theme(legend.text = element_text(size = 8)) + theme(axis.title.y = element_text(size = 18)) +
-  geom_vline(xintercept = c(1.5, 2.5, 3.5, 4.5), color= "grey") +  
+  geom_vline(xintercept = c(1.5, 2.5, 3.5, 4.5, 5.5), color= "grey") +  
   theme(panel.border = element_rect(fill=NA, colour = "black", size=.75)) +
   geom_segment(aes(x = .5,xend = .98, y=35.8, yend = 35.8), color = "blue", size = .65) + geom_segment(aes(x = 1.05,xend = 1.45, y=13.3, yend = 13.3), color = "red", size = 0.65) +
   geom_segment(aes(x = 1.55,xend = 1.98, y=85.9, yend = 85.9), color = "blue", size = .65) + geom_segment(aes(x = 2.05,xend = 2.45, y=36.6, yend = 36.6), color = "red", size = 0.65) +
-  geom_segment(aes(x = 2.55,xend = 2.98, y=39.2, yend = 39.2), color = "blue", size = .65) + geom_segment(aes(x = 3.05,xend = 3.45, y=15.0, yend = 15.0), color = "red", size = 0.65) + 
-  geom_segment(aes(x = 3.55,xend = 3.98, y=20.9, yend = 20.9), color = "blue", size = .65) + geom_segment(aes(x = 4.05,xend = 4.45, y=9.52, yend = 9.52), color = "red", size = 0.65) + 
-  geom_segment(aes(x = 4.55,xend = 4.98, y=30.7, yend = 30.7), color = "blue", size = .65) + geom_segment(aes(x = 5.05,xend = 5.45, y=8.37, yend = 8.37), color = "red", size = 0.65) 
+  geom_segment(aes(x = 2.55,xend = 2.98, y=46.1, yend = 46.1), color = "blue", size = .65) + geom_segment(aes(x = 3.05,xend = 3.45, y=15.9, yend = 15.9), color = "red", size = 0.65) + 
+  geom_segment(aes(x = 3.55,xend = 3.98, y=39.2, yend = 39.2), color = "blue", size = .65) + geom_segment(aes(x = 4.05,xend = 4.45, y=15.0, yend = 15.0), color = "red", size = 0.65) + 
+  geom_segment(aes(x = 4.55,xend = 4.98, y=20.9, yend = 20.9), color = "blue", size = .65) + geom_segment(aes(x = 5.05,xend = 5.45, y=9.52, yend = 9.52), color = "red", size = 0.65) + 
+  geom_segment(aes(x = 5.55,xend = 5.98, y=30.7, yend = 30.7), color = "blue", size = .65) + geom_segment(aes(x = 6.05,xend = 6.45, y=8.37, yend = 8.37), color = "red", size = 0.65) 
 dotplot_CD8
 
 pdf("CD8 Target Genes Dotplot.pdf", width=8, height=8)  

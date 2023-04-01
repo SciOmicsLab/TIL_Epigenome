@@ -181,22 +181,36 @@ OSM_mean <- OSM%>%
   group_by(TIL) %>% 
   summarise(mean_val = mean(Counts))
 
+ETS2 <- df_ipa_long %>% dplyr::filter( description == "ETS2")
+ETS2_mean <- ETS2 %>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
+TNFRSF18 <- df_ipa_long %>% dplyr::filter( description == "TNFRSF18")
+TNFRSF18_mean <- TNFRSF18 %>% 
+  group_by(TIL) %>% 
+  summarise(mean_val = mean(Counts))
+
+pdf("updated_CD4_dotplot.pdf", height = 8, width = 8)
 ggplot(df_ipa_long, aes(description, Counts)) + geom_point(aes(color = TIL), position = position_jitterdodge(dodge.width = 0.9), size = 2.5) +
   scale_color_manual(values = c("blue", "red")) + 
   theme_bw() + 
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
   theme(axis.text.x = element_text(vjust = 0.5, face = "italic", size = 15, color = "black")) + labs(x = "Gene", y = "Normalized Counts") + 
   theme(axis.text.y = element_text(size = 15, color = "black")) + theme(legend.text = element_text(size = 8)) + theme(axis.title.y = element_text(size = 18)) + theme(legend.position = "none") +
-  geom_vline(xintercept = c(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5), color= "grey") + 
+  geom_vline(xintercept = c(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5), color= "grey") + 
   theme(panel.border = element_rect(fill=NA, colour = "black", size=.75)) +
-  geom_segment(aes(x = .5,xend = .98, y=239, yend = 239), color = "blue", size = .75) + geom_segment(aes(x = 1.05,xend = 1.45, y=1357, yend = 1357), color = "red", size = 0.75) + 
-  geom_segment(aes(x = 1.55,xend = 1.98, y=3171, yend = 3171), color = "blue", size = 0.75) + geom_segment(aes(x = 2.05,xend = 2.45, y=7023, yend = 7023), color = "red", size = 0.75) + 
-  geom_segment(aes(x = 2.55,xend = 2.98, y=160, yend = 160), color = "blue", size = 0.75) + geom_segment(aes(x = 3.05,xend = 3.45, y=1153, yend = 1153), color = "red", size = 0.75) +
-  geom_segment(aes(x = 3.55,xend = 3.98, y=256, yend = 256), color = "blue", size = 0.75) + geom_segment(aes(x = 4.05,xend = 4.45, y=1082, yend = 1082), color = "red", size = 0.75) +
-  geom_segment(aes(x = 4.55,xend = 4.98, y=297, yend = 297), color = "blue", size = 0.75) + geom_segment(aes(x = 5.05,xend = 5.45, y=1226, yend = 1226), color = "red", size = 0.75) + 
-  geom_segment(aes(x = 5.55,xend = 5.98, y=12.9, yend = 12.9), color = "blue", size = 0.75) + geom_segment(aes(x = 6.05,xend = 6.45, y=155, yend = 155), color = "red", size = 0.75) +
-  geom_segment(aes(x = 6.55,xend = 6.98, y=271, yend = 271), color = "blue", size = 0.75) + geom_segment(aes(x = 7.05,xend = 7.45, y=1680, yend = 1680), color = "red", size = 0.75) + 
-  geom_segment(aes(x = 7.55,xend = 7.98, y=75.5, yend = 75.5), color = "blue", size = 0.75) + geom_segment(aes(x = 8.05,xend = 8.45, y=424, yend = 424), color = "red", size = 0.75)
+  geom_segment(aes(x = .5,xend = .98, y=257, yend = 257), color = "blue", size = .75) + geom_segment(aes(x = 1.05,xend = 1.45, y=574, yend = 547), color = "red", size = 0.75) +
+  geom_segment(aes(x = 1.5,xend = 1.98, y=239, yend = 239), color = "blue", size = .75) + geom_segment(aes(x = 2.05,xend = 2.45, y=1357, yend = 1357), color = "red", size = 0.75) + 
+  geom_segment(aes(x = 2.55,xend = 2.98, y=3171, yend = 3171), color = "blue", size = 0.75) + geom_segment(aes(x = 3.05,xend = 3.45, y=7023, yend = 7023), color = "red", size = 0.75) + 
+  geom_segment(aes(x = 3.55,xend = 3.98, y=160, yend = 160), color = "blue", size = 0.75) + geom_segment(aes(x = 4.05,xend = 4.45, y=1153, yend = 1153), color = "red", size = 0.75) +
+  geom_segment(aes(x = 4.55,xend = 4.98, y=256, yend = 256), color = "blue", size = 0.75) + geom_segment(aes(x = 5.05,xend = 5.45, y=1082, yend = 1082), color = "red", size = 0.75) +
+  geom_segment(aes(x = 5.55,xend = 5.98, y=297, yend = 297), color = "blue", size = 0.75) + geom_segment(aes(x = 6.05,xend = 6.45, y=1226, yend = 1226), color = "red", size = 0.75) + 
+  geom_segment(aes(x = 6.55,xend = 6.98, y=12.9, yend = 12.9), color = "blue", size = 0.75) + geom_segment(aes(x = 7.05,xend = 7.45, y=155, yend = 155), color = "red", size = 0.75) +
+  geom_segment(aes(x = 7.55,xend = 7.98, y=172, yend = 172), color = "blue", size = 0.75) + geom_segment(aes(x = 8.05,xend = 8.45, y=568, yend = 568), color = "red", size = 0.75) + 
+  geom_segment(aes(x = 8.55,xend = 8.98, y=271, yend = 271), color = "blue", size = 0.75) + geom_segment(aes(x = 9.05,xend = 9.45, y=1680, yend = 1680), color = "red", size = 0.75) + 
+  geom_segment(aes(x = 9.55,xend = 9.98, y=75.5, yend = 75.5), color = "blue", size = 0.75) + geom_segment(aes(x = 10.05,xend = 10.45, y=424, yend = 424), color = "red", size = 0.75)
+dev.off()
 ```
 
 ```{r IPA results}
