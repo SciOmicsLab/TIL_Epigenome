@@ -231,7 +231,8 @@ Exclude samples from Pt14 due to poor sequencing quality
 
 ```{r get-data, echo=FALSE}
 
-count_data <- read.table("./data/counts.table",header = TRUE,row.names = 1) 
+count_data <- read.table("../../data/rna_counts.csv",header = TRUE, row.names=1, sep = ",") 
+
 
 colnames <- colnames(count_data)
 
@@ -533,9 +534,11 @@ cumsum(props)[1]
 
 #title_supp <- " for top 5000 genes by pvalue"
 title_supp <- ""
-plt_pca1_cd4_pv <- ggplot(as.data.frame(pca_results_cd4$x), aes(x=PC1, y=PC2)) +
+plt_pca1_cd4_pv <- ggplot(as.data.frame(pca_results_cd4$x), 
+                          aes(x=PC1, y=PC2, label=rownames(as.data.frame(pca_results_cd4$x)))) +
       geom_point(aes(color = clinical_data_cd4$TILlowhi_CD4), 
                      size = 6) +
+      geom_text_repel() +
       scale_color_manual(values = c("blue", "red")) +
       scale_fill_discrete(name ='Number TIL Infused') +
       xlab(paste("PC1", percent(props[1]))) +
@@ -549,10 +552,11 @@ plt_pca1_cd4_pv <- ggplot(as.data.frame(pca_results_cd4$x), aes(x=PC1, y=PC2)) +
   
 plt_pca1_cd4_pv  
       
-plt_pca2_cd4_pv <- ggplot(as.data.frame(pca_results_cd4$x), aes(x=PC2, y=PC3)) +
+plt_pca2_cd4_pv <- ggplot(as.data.frame(pca_results_cd4$x), 
+                          aes(x=PC2, y=PC3, label=rownames(as.data.frame(pca_results_cd4$x)))) +
       geom_point(aes(color = clinical_data_cd4$TILlowhi_CD4), size = 3) +
+      geom_text_repel() + 
       scale_color_manual(values = c("blue", "red", "green")) +
-      #geom_text(aes(label=clinical_df$Sample_ID)) + 
       xlab(paste("PC2", percent(props[2]))) +
       ylab(paste("PC3", percent(props[3]))) +
       labs (title = paste("CD4 PCA by TIL Infused (Low/High)", title_supp), fill='Number TIL Infused') +
@@ -573,10 +577,11 @@ cumsum(props)
 cumsum(props)[1]
     
 
-plt_pca1_cd8_pv <- ggplot(as.data.frame(pca_results_cd8$x), aes(x=PC1, y=PC2)) +
+plt_pca1_cd8_pv <- ggplot(as.data.frame(pca_results_cd8$x), 
+                          aes(x=PC1, y=PC2, label=rownames(as.data.frame(pca_results_cd4$x)))) +
       geom_point(aes(color = clinical_data_cd8$TILlowhi_CD8), size = 3) +
+      geom_text_repel() + 
       scale_color_manual(values = c("blue", "red", "green")) +
-      #geom_text(aes(label=clinical_df$Sample_ID)) + 
       xlab(paste("PC1", percent(props[1]))) +
       ylab(paste("PC2", percent(props[2]))) +
       labs (title = paste("CD8 PCA by TIL Infused (Low/High)", title_supp)) +
@@ -586,10 +591,11 @@ theme_test() + theme(element_line(size = 1)) +
   theme(axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15))+
     theme(legend.position = "top")
       
-plt_pca2_cd8_pv <- ggplot(as.data.frame(pca_results_cd8$x), aes(x=PC2, y=PC3)) +
+plt_pca2_cd8_pv <- ggplot(as.data.frame(pca_results_cd8$x), 
+                          aes(x=PC2, y=PC3, label=rownames(as.data.frame(pca_results_cd4$x)))) +
       geom_point(aes(color = clinical_data_cd8$TILlowhi_CD8), size = 3) +
       scale_color_manual(values = c("blue", "red", "green")) +
-      #geom_text(aes(label=clinical_df$Sample_ID)) + 
+      geom_text_repel() + 
       xlab(paste("PC2", percent(props[2]))) +
       ylab(paste("PC3", percent(props[3]))) +
       labs (title = paste("CD8 PCA by TIL Infused (Low/High)", title_supp), fill='Number TIL Infused') +
