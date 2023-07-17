@@ -1,0 +1,389 @@
+---
+title: "scRNA-seq Code"
+author: "Brian Thompson"
+date: "2023-07-14"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(root.dir = "/Volumes/ExtremeSSD/Mac_trashcan_backup/TIL_Epigenome_scRNAseq")
+```
+
+
+
+```{r install packages}
+library(tidyverse)
+library(Seurat)
+library(magrittr)
+library(survival)
+library(survminer)
+library(plyr)
+library(readr)
+library(readxl)
+library(gplots)
+library(RColorBrewer)
+library(dplyr)
+library(ggplot2)
+```
+
+
+```{r}
+#Read in patient files and then add the associated meta data
+files <- list.files(pattern = (glob2rx("*.txt")))
+names_test <- gsub("_tpm.txt", "", files[1])
+int_file <- read_delim(files[1], delim = "\t", 
+                       escape_double = FALSE, trim_ws = TRUE)
+int_file <- as.data.frame(int_file)
+
+
+files <- list.files(pattern = (glob2rx("*.txt")))
+
+for (x in files){
+names_test <- gsub("_tpm.txt", "", x)
+int_file <- read_delim(x, delim = "\t", 
+                       escape_double = FALSE, trim_ws = TRUE)
+int_file <- as.data.frame(int_file)
+assign(names_test, int_file)
+}
+
+#Have to add unique patient identifiers to each dataframe to enable linking of the metadata
+assign_names <- function(input, patient){
+  cell_name <- c()
+  cell_paste_name <- c()
+  x = 1
+for (x in 2:ncol(input)){
+  cell_name <- colnames(input[x])
+  cell_paste_name[x] <- paste0(cell_name, patient)
+  x <- x + 1
+}
+cell_paste_name <- cell_paste_name[-1]
+colnames(input)[2:ncol(input)] <- cell_paste_name
+return(input)
+}
+
+Pt01 <- assign_names(Pt01, "-Pt01")
+Pt02 <- assign_names(Pt02, "-Pt02")
+Pt03 <- assign_names(Pt03, "-Pt03")
+Pt04 <- assign_names(Pt04, "-Pt04")
+Pt05 <- assign_names(Pt05, "-Pt05")
+Pt06 <- assign_names(Pt06, "-Pt06")
+Pt07 <- assign_names(Pt07, "-Pt07")
+Pt08 <- assign_names(Pt08, "-Pt08")
+Pt09 <- assign_names(Pt09, "-Pt09")
+Pt10 <- assign_names(Pt10, "-Pt10")
+
+
+TIL <- Reduce(function (...) { merge(..., all = TRUE, by = "Genes") },   
+                   list(Pt01, Pt02, Pt03, Pt04, Pt05,
+                        Pt06, Pt07, Pt08, Pt09, Pt10)) 
+TIL %<>% filter(!grepl("^[1-9]-", Genes))
+TIL %<>% filter(!grepl("^[1-9][1-9]-", Genes))
+genes <- TIL$Genes
+rownames(TIL) <- genes
+TIL <- TIL[,-1]
+colnames(TIL)<- gsub("[-]", "_", colnames(TIL))
+TIL <- na.omit(TIL)
+
+
+cells <- colnames(TIL)
+cell_names <- str_split(cells, "_")
+cell_names <- as.data.frame(cell_names)
+cell_names <- cell_names[-c(1:2),]
+cell_names <- t(cell_names)
+cell_names_final <- tibble::rownames_to_column(as.data.frame(cell_names), "cells")
+cell_names_final <- cell_names_final %>% dplyr:::rename("Patient" = "3")
+```
+
+
+```{r}
+#Reading in and formatting the patient metadata
+Clinical_data <- read_excel("Clinical_data.xlsx")
+median(Clinical_data$`# of TIL infused`) #5.63e+10
+Clinical_data %<>% mutate(TIL_cat = case_when(`# of TIL infused` > median(Clinical_data$`# of TIL infused`) ~ "High", 
+                                              TRUE ~ "Low")) %>%
+  
+  mutate(OS_cat = case_when(`OS (Melanoma Specific) months` > median(Clinical_data$`OS (Melanoma Specific) months`) ~ "OS_High", 
+                            TRUE ~ "OS_Low")) %>%
+  
+  #add column of TIL infused scaled to billions
+  mutate(TIL_Infused_Billions = Clinical_data$`# of TIL infused`/1e9) %>% 
+  
+  
+  #create a column for CD4 High/Low
+  mutate(CD4_High_Low = ifelse(Clinical_data$`%CD8 in Rx` >= median(Clinical_data$`%CD8 in Rx`), "High", "Low"))
+
+colnames(Clinical_data)[4] <- "OS_Months"
+colnames(Clinical_data)[8] <- "CD4"
+```
+
+
+```{r visualization}
+#Visualization of meta/clinical data
+df = read_excel("Clinical_data.xlsx")
+
+colnames(df) = c("Patient", "Resposne", "PFS_months", "OS_months", "Alive", "Number_TIL_Infused", "Percent_CD8", "Percent_CD4")
+
+df = df %>% 
+  mutate(Censor = ifelse(is.na(Alive), 1, 0)) %>% 
+  mutate(TIL_High_Low = ifelse(Number_TIL_Infused > median(Number_TIL_Infused), "High", "Low")) %>% 
+  mutate(median_OS = ifelse(OS_months > median(OS_months), "High", "Low"))
+
+#####Number of TIL vs. Percent CD4######
+model= lm(Number_TIL_Infused ~ Percent_CD4, data=df)
+summary(model)
+
+CD4_vs_TIL_Plot = ggplot(df, aes(x=Number_TIL_Infused, y=Percent_CD4, color = median_OS)) +
+  geom_point(size = 3) +
+  geom_smooth(
+    method = "lm", 
+    formula = y ~ x, 
+    se = FALSE, 
+    linetype = "dashed", 
+    color = "purple") +
+  annotate("text", x = 4e10, y = 12, label = paste("R² =", round(summary(model)$r.squared, 2))) +
+  annotate("text", x = 4e10, y = 8, label = paste("p =", round(summary(model)$coefficients[2,4], 6))) +
+  scale_color_manual(values = c("blue", "red")) +
+  xlab(label = "Number of TIL Infused") +
+  ylab(label ="%CD4") +
+  theme_classic()
+
+CD4_vs_TIL_Plot
+```
+
+```{r}
+#Custom function to generate the number of cells positive for a given gene
+cell_positive <- function(gene, cutoff, seurat_object){
+ID <- seurat_object@meta.data$Patient
+ID <- unique(ID)
+test <- lapply(ID, print)
+
+
+GOI1 <- gene 
+GOI1.cutoff <- cutoff
+int_output <- vector("double")
+for (patient_number in test){
+  result_patient <- subset(seurat_object, subset = (Patient == patient_number))
+  GOI1.cells <- length(which(FetchData(result_patient, vars = GOI1) > GOI1.cutoff))
+  all.cells.incluster <- table(result_patient@meta.data$TIL)
+  p <- GOI1.cells/all.cells.incluster*100 
+  p1 <- as.data.frame(p)
+  int_output[[patient_number]] <- as.numeric(p)
+}
+fin_output <- as_tibble(int_output)
+fin_output %<>% mutate(Patient = ID)
+
+fin_join <- join(fin_output, Clinical_data, by = "Patient")
+colnames(fin_join)[1] <- gene
+return(fin_join)
+}
+```
+
+
+```{r}
+
+cell_names_final %<>% mutate(TIL_Cat = case_when(Patient == "Pt01" ~ "High", 
+                                                 Patient == "Pt02" ~ "Low", 
+                                                  Patient == "Pt03" ~ "Low", 
+                                                  Patient == "Pt04" ~ "Low", 
+                                                  Patient == "Pt05" ~ "Low", 
+                                                  Patient == "Pt06" ~ "High", 
+                                                  Patient == "Pt07" ~ "High", 
+                                                  Patient == "Pt08" ~ "High", 
+                                                  Patient == "Pt09" ~ "High", 
+                                                  Patient == "Pt10" ~ "Low"))
+
+####Create Seurat Object
+TIL_object <- CreateSeuratObject(counts = TIL, project = "TIL", min.cells = 0, min.features = 0)
+
+#Adding metadata and normalizing data
+TIL_object <- AddMetaData(TIL_object, cell_names_final$Patient, col.name = "Patient")
+TIL_object <- AddMetaData(TIL_object, cell_names_final$TIL_Cat, col.name = "TIL")
+Idents(object = TIL_object) <- "Patient"
+grep(glob2rx("*MKI67*"), rownames(GetAssayData(TIL_object, slot = "counts")), value = TRUE) 
+TIL_object[["percent.mt"]] <- PercentageFeatureSet(TIL_object, pattern = "^MT-")
+VlnPlot(TIL_object, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+TIL_object <- NormalizeData(TIL_object)
+
+#Subsetting TIL object to remove the
+TIL_subset <- subset(TIL_object, subset = percent.mt < 20)
+```
+
+
+```{r}
+#Subset the CD4+ cells
+TIL_CD4 <- subset(TIL_object, subset = CD4 > 0 & CD8A < 1 & percent.mt < 20, slot = "data")
+```
+
+
+```{r}
+#Analyzing the genes from the bulk RNA-seq analysis that also appear in the scRNA-seq dataset
+CD4_sig_genes <- list("PDE4D", "PDE7B", "MAP3K8", "OSM", "LIF", "TNFRSF4", "IL13", "IL5", 
+                      "ETS2", "TNFRSF18", "RAB11FIP4", "BACE2","ZNF846", "PTGDR2", "EIF3K", 
+                     "VPS53", "CCDC150", "ACVR2A", "SPOCK1", "IL2RA") 
+
+for(i in CD4_sig_genes){
+  int <- cell_positive(i, 0.1, TIL_CD4)
+  print(ggplot(int, aes_string(x="TIL_cat", y=i)) +
+          geom_point(size=3, aes(color = TIL_cat)) +
+          scale_color_manual(values = c("blue", "red")) + 
+          theme_classic() + 
+          stat_compare_means(method = "t.test"))
+}
+
+for(i in CD4_sig_genes){
+  int <- cell_positive(i, 0.1, TIL_CD4)
+  names_int <- paste0(i, "_CD4")
+  print(names_int)
+  assign(names_int, int)
+}
+
+CD4_join <- join(OSM_CD4, ETS2_CD4, by = "Patient")
+CD4_join <- join(CD4_join, TNFRSF18_CD4, by = "Patient")
+til_categories <- CD4_join[10]
+CD4_join %<>% select(Patient, ETS2, TNFRSF18, OSM)
+CD4_join$TIL_cat <- til_categories
+CD4_join %<>% pivot_longer(cols = c(2:4), names_to = "Sample", 
+                               values_to = "Counts")
+
+  
+base:::mean(filter(OSM_CD4, TIL_cat == "High")$OSM)#2.09
+base:::mean(filter(OSM_CD4, TIL_cat == "Low")$OSM)#11.67
+base:::mean(filter(ETS2_CD4, TIL_cat == "High")$ETS2)#3.13
+base:::mean(filter(ETS2_CD4, TIL_cat == "Low")$ETS2)#10.53
+base:::mean(filter(TNFRSF18_CD4, TIL_cat == "High")$TNFRSF18)#30.69
+base:::mean(filter(TNFRSF18_CD4, TIL_cat == "Low")$TNFRSF18)#44.71
+
+
+
+cell_counts_plot <- ggplot(CD4_join, aes(Sample, Counts)) +
+  geom_point(aes(color = TIL_cat$TIL_cat), position = position_jitterdodge(dodge.width = 0.9), size = 3.0) +
+  scale_color_manual(values = c("blue", "red")) + 
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(axis.text.x = element_text(vjust = 0.5, face = "italic", size = 15, color = "black")) + labs(x = "Gene", y = "% Cells Positive (as % of CD4+)") + 
+  theme(axis.text.y = element_text(size = 15, color = "black")) + theme(legend.text = element_text(size = 8)) + theme(axis.title.y = element_text(size = 18)) +
+  geom_vline(xintercept = c(1.5, 2.5), color= "grey") +  
+  theme(panel.border = element_rect(fill=NA, colour = "black", size=.75)) +
+  geom_segment(aes(x = .5,xend = .98, y=2.09, yend = 2.09), color = "blue", size = .65) + geom_segment(aes(x = 1.05,xend = 1.45, y=11.67, yend = 11.67), color = "red", size = 0.65) +
+  geom_segment(aes(x = 1.55,xend = 1.98, y=3.13, yend = 3.13), color = "blue", size = .65) + geom_segment(aes(x = 2.05,xend = 2.45, y=10.53, yend = 10.53), color = "red", size = 0.65) +
+  geom_segment(aes(x = 2.55,xend = 2.98, y=30.69, yend = 30.69), color = "blue", size = .65) + geom_segment(aes(x = 3.05,xend = 3.45, y=44.71, yend = 44.71), color = "red", size = 0.65) + 
+  annotate("text", x=1, y=65, label= "p = 0.034") + annotate("text", x=2, y=65, label= "p = 0.050") + 
+  annotate("text", x=3, y=65, label= "p = 0.095") +
+  labs(color = "TIL Category")
+
+
+cell_counts_plot
+
+
+
+###CD4+ Heatmap
+CD4_sig_genes_obj <- list("PDE4D_CD4", "PDE7B_CD4", "MAP3K8_CD4", "OSM_CD4", "LIF_CD4", "TNFRSF4_CD4", "IL13_CD4", "IL5_CD4", 
+                      "ETS2_CD4", "TNFRSF18_CD4", "RAB11FIP4_CD4", "BACE2_CD4","ZNF846_CD4", "PTGDR2_CD4", "EIF3K_CD4", 
+                      "VPS53_CD4", "CCDC150_CD4", "ACVR2A_CD4", "SPOCK1_CD4", "IL2RA_CD4")
+
+int <- c()
+n = 1
+for(i in CD4_sig_genes_obj){
+    int_file <- eval(parse(text = i))
+    int_file <- int_file[,c(1,2,10)]
+  if(n == 1){ 
+    int <- join(PDE4D_CD4[,c(1,2,10)], PDE7B_CD4[,c(1,2)], by = "Patient")
+    }
+  if(n > 2){
+    int_file <- int_file[,c(1,2)]
+    int <- join(int, int_file, by = "Patient")  
+  }
+  n <- n + 1
+}
+
+assign("CD4_valid", int)
+CD4_valid$Patient <- paste0(CD4_valid$Patient,sep = "_", CD4_valid$TIL_cat)
+rownames(CD4_valid) <- CD4_valid$Patient
+CD4_valid <- CD4_valid[,-c(2,3)]
+CD4_valid <- as.data.frame(t(CD4_valid))
+
+
+heatmap.2(as.matrix(CD4_valid), cexRow = 0.8,   cexCol = 1.0, scale = "row", trace = "none", margins = c(7,5), 
+          key = FALSE, labRow = rownames(CD4_valid), Rowv = TRUE, Colv = TRUE, col = rev(brewer.pal(11, "RdBu")))
+
+```
+
+```{r}
+#Subset the CD8+ cells 
+TIL_CD8 <- subset(TIL_object, subset = CD4 == 0 & CD8A >= 1 & percent.mt < 20)
+```
+
+
+```{r}
+#Analyzing the CD8+ Cells
+TIL_CD8 <- subset(TIL_object, subset = CD4 == 0 & CD8A >= 1 & percent.mt < 20)
+
+CD8_list <- c("TTC30B","PTPRK", "GPR137B", "MYO1E", "APOL4", "RBPMS",
+               "SH2D4A", "AHI1", "GLDC", "PRDM1", "IL26", "TOX", "IGFBP3", 
+               "BCOR", "MAML2", "APOBEC3G", "TBXAS1", 
+               "SSH1", "TAB2", "NTRK2", "EIF4E3", 
+                "APOL4", "PLEKHG1", "MAST4", "ZBED2", 
+               "LDLRAD4", "LMCD1","XXYLT1", "GZMB", 
+               "PRF1", "GZMA", "TNF", "IFNG")
+
+for(i in CD8_list){
+  int <- cell_positive(i, 0.1, TIL_CD8)
+  print(ggplot(int, aes_string(x="TIL_cat", y=i)) +
+          geom_point(size=3, aes(color = TIL_cat)) +
+          scale_color_manual(values = c("blue", "red")) + 
+          theme_classic() + 
+          stat_compare_means(method = "t.test"))
+}
+
+
+#CD8+ Heatmap
+for(i in CD8_list){
+  int <- cell_positive(i, 0.1, TIL_CD8)
+  print(ggplot(int, aes_string(x="TIL_cat", y=i)) +
+          geom_point(size=3, aes(color = TIL_cat)) +
+          scale_color_manual(values = c("blue", "red")) + 
+          theme_classic() + 
+          stat_compare_means(method = "t.test"))
+}
+
+for(i in CD8_list){
+  int <- cell_positive(i, 0.1, TIL_CD8)
+  names_int <- paste0(i, "_CD8")
+  print(names_int)
+  assign(names_int, int)
+}
+
+CD8_sig_genes_obj <- list("TTC30B_CD8","PTPRK_CD8", "GPR137B_CD8", "MYO1E_CD8", "APOL4_CD8", "RBPMS_CD8",
+                       "SH2D4A_CD8", "AHI1_CD8", "GLDC_CD8", "PRDM1_CD8", "IL26_CD8", "TOX_CD8", "IGFBP3_CD8", 
+                       "BCOR_CD8", "MAML2_CD8", "APOBEC3G_CD8", "TBXAS1_CD8", 
+                       "SSH1_CD8", "TAB2_CD8", "NTRK2_CD8", "EIF4E3_CD8", 
+                       "APOL4_CD8", "PLEKHG1_CD8", "MAST4_CD8", 
+                       "LDLRAD4_CD8", "LMCD1_CD8","XXYLT1_CD8", "GZMB_CD8", 
+                       "PRF1_CD8", "GZMA_CD8", "TNF_CD8", "IFNG_CD8")
+
+int <- c()
+n = 1
+for(i in CD8_sig_genes_obj){
+  int_file <- eval(parse(text = i))
+  int_file <- int_file[,c(1,2,10)]
+  if(n == 1){ 
+    int <- join(TTC30B_CD8[,c(1,2,10)], PTPRK_CD8[,c(1,2)], by = "Patient")
+  }
+  if(n > 2){
+    int_file <- int_file[,c(1,2)]
+    int <- join(int, int_file, by = "Patient")  
+  }
+  n <- n + 1
+}
+
+assign("CD8_valid", int)
+CD8_valid$Patient <- paste0(CD8_valid$Patient,sep = "_", CD8_valid$TIL_cat)
+rownames(CD8_valid) <- CD8_valid$Patient
+CD8_valid <- CD8_valid[,-c(2,3)]
+CD8_valid <- as.data.frame(t(CD8_valid))
+
+heatmap.2(as.matrix(CD8_valid), cexRow = 0.8,   cexCol = 1.0, scale = "row", trace = "none", margins = c(7,5), 
+          key = FALSE, labRow = rownames(CD8_valid), Rowv = TRUE, Colv = TRUE, col = rev(brewer.pal(11, "RdBu")))
+```
+
