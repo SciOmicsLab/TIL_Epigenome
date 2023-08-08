@@ -1,5 +1,7 @@
 # TIL Epigenome Paper
 
+Thompson B, Strange A, Amato CM, Hester-McCullough J, Sarnaik AA, Weber JS, Woods DM. CD4 Phenotypes Are Associated with Reduced Expansion of Tumor-Infiltrating Lymphocytes in Melanoma Patients Treated with Adoptive Cell Therapy. J Immunol. 2023 Jul 19:ji2300250. doi: 10.4049/jimmunol.2300250. Epub ahead of print. PMID: 37466381.
+
 ## Scripts for the paper analyzing RNA-seq, ChIP-seq for TIL Epigenomic data.
 
 This repository contains
